@@ -773,7 +773,10 @@ def build_ui(config: AppConfig) -> gr.Blocks:
                 inpaint_canvas = gr.ImageEditor(
                     label="Canvas",
                     type="pil",
-                    brush=gr.Brush(colors=["#ff0000"], default_size=24),
+                    brush=gr.Brush(
+                        colors=["#ff0000", "#22c55e", "#3b82f6", "#f59e0b", "#a855f7"],
+                        default_size=24,
+                    ),
                     sources=["upload", "clipboard"],
                     visible=True,
                     elem_id="canvas-box",
@@ -804,82 +807,74 @@ def build_ui(config: AppConfig) -> gr.Blocks:
                         REGIONAL_LAYOUTS, value="horizontal", label="Layout"
                     )
                     regional_ratios = gr.Textbox(
-                        label="Ratios", placeholder="1,1 or 1,2,1"
+                        label="Ratios", placeholder="1,1 or 1,2,1;1,1"
+                    )
+                    regional_base_ratios = gr.Textbox(
+                        label="Base ratio",
+                        placeholder="0.2 or 0.2,0.3 (blank = 0.2)",
+                    )
+                    regional_overlay_ratio = gr.Slider(
+                        0.0,
+                        0.5,
+                        value=0.0,
+                        step=0.01,
+                        label="Overlay ratio",
+                    )
+                    with gr.Row():
+                        regional_use_base_prompt = gr.Checkbox(
+                            label="Use base prompt",
+                            value=False,
+                        )
+                        regional_use_common_prompt = gr.Checkbox(
+                            label="Use common prompt",
+                            value=False,
+                        )
+                    regional_use_common_negative = gr.Checkbox(
+                        label="Use common negative prompt",
+                        value=True,
                     )
                     regional_common_prompt = gr.Textbox(
                         label="Common prompt", lines=2,
-                        placeholder="shared tags for all regions",
-                    )
-                    regional_base_prompt = gr.Textbox(
-                        label="Base prompt", lines=2,
-                        placeholder="layout/composition prompt (e.g. 2girls, classroom)",
+                        placeholder="tags shared by all regions, e.g. 2girls, classroom",
                     )
                     regional_prompt_text = gr.Textbox(
                         label="Region prompts", lines=4,
-                        placeholder="left prompt\nBREAK\nright prompt",
+                        placeholder="left region prompt\nBREAK\nright region prompt",
+                    )
+                    regional_lora_text = gr.Textbox(
+                        label="Region LoRAs", lines=3,
+                        placeholder="<lora:left_character:0.8>\nBREAK\n<lora:right_character:0.8>",
+                    )
+                    with gr.Row():
+                        regional_lora_negative_te = gr.Textbox(
+                            label="LoRA negative TE",
+                            placeholder="0 or 0,0.2",
+                        )
+                        regional_lora_negative_unet = gr.Textbox(
+                            label="LoRA negative U-Net",
+                            placeholder="0 or 0,0.2",
+                        )
+                    regional_lora_stop_step = gr.Number(
+                        value=0,
+                        precision=0,
+                        label="LoRA stop step",
                     )
                     regional_negative_text = gr.Textbox(
                         label="Region negatives", lines=2,
                         placeholder="optional, separated by BREAK",
                     )
-                    regional_use_base_pass = gr.Checkbox(
-                        label="Run base pass before regions",
-                        value=True,
-                        info="Recommended ON for img2img/inpaint when using region LoRAs.",
-                    )
-
-                    gr.HTML(
-                        '<div class="section-title" '
-                        'style="margin-top:8px;">Per-region LoRAs</div>'
+                    regional_preview_btn = gr.Button("Preview masks", size="sm")
+                    regional_mask_preview = gr.Image(
+                        label="Mask preview",
+                        type="pil",
+                        interactive=False,
+                        height=180,
                     )
                     gr.Markdown(
-                        "Common LoRAs apply to the **base pass and every region** "
-                        "(e.g. situation/style LoRA). Region LoRAs apply only when "
-                        "that region is being inpainted (e.g. character LoRA). "
-                        "Region LoRAs are swapped per region so character LoRAs "
-                        "don't cross-contaminate.",
+                        "Supports BREAK, ADDROW, ADDCOL, ADDBASE, ADDCOMM, "
+                        "base ratios, per-region negatives, and per-region LoRAs. "
+                        "Inline <lora:name:weight> tags are stripped from prompts and loaded as adapters.",
                     )
-
-                    regional_common_loras = gr.CheckboxGroup(
-                        choices=handlers.lora_choices(ctx),
-                        label="Common LoRAs",
-                    )
-
-                    with gr.Tabs():
-                        with gr.Tab("Region 1"):
-                            regional_region_loras_0 = gr.CheckboxGroup(
-                                choices=handlers.lora_choices(ctx),
-                                label=None,
-                                show_label=False,
-                            )
-                        with gr.Tab("Region 2"):
-                            regional_region_loras_1 = gr.CheckboxGroup(
-                                choices=handlers.lora_choices(ctx),
-                                label=None,
-                                show_label=False,
-                            )
-                        with gr.Tab("Region 3"):
-                            regional_region_loras_2 = gr.CheckboxGroup(
-                                choices=handlers.lora_choices(ctx),
-                                label=None,
-                                show_label=False,
-                            )
-                        with gr.Tab("Region 4"):
-                            regional_region_loras_3 = gr.CheckboxGroup(
-                                choices=handlers.lora_choices(ctx),
-                                label=None,
-                                show_label=False,
-                            )
-
-                    with gr.Row():
-                        regional_base_strength = gr.Slider(
-                            0.0, 1.0, value=0.55, step=0.01,
-                            label="Base strength (img2img/inpaint)",
-                        )
-                        regional_region_strength = gr.Slider(
-                            0.0, 1.0, value=0.75, step=0.01,
-                            label="Region strength",
-                        )
 
                 with gr.Group(elem_classes="panel"):
                     gr.HTML('<div class="section-title">Basic Settings</div>')
@@ -1087,14 +1082,6 @@ def build_ui(config: AppConfig) -> gr.Blocks:
                 outputs=settings_summary,
             )
 
-        regional_lora_components = [
-            regional_common_loras,
-            regional_region_loras_0,
-            regional_region_loras_1,
-            regional_region_loras_2,
-            regional_region_loras_3,
-        ]
-
         def _refresh_checkpoint_choices(current):
             choices = handlers.checkpoint_choices(ctx)
             values = [value for _, value in choices]
@@ -1108,11 +1095,7 @@ def build_ui(config: AppConfig) -> gr.Blocks:
         )
 
         def _refresh_all_lora_choices(q):
-            main_update = gr.update(choices=handlers.lora_choices(ctx, q))
-            full_choices = handlers.lora_choices(ctx)
-            return [main_update] + [
-                gr.update(choices=full_choices) for _ in regional_lora_components
-            ]
+            return gr.update(choices=handlers.lora_choices(ctx, q))
 
         def _refresh_after_upload(files, q):
             handlers.upload_lora(ctx, files, q)
@@ -1121,7 +1104,7 @@ def build_ui(config: AppConfig) -> gr.Blocks:
         refresh_loras.click(
             fn=_refresh_all_lora_choices,
             inputs=lora_search,
-            outputs=[lora_table, *regional_lora_components],
+            outputs=lora_table,
         )
         lora_search.change(
             fn=lambda q: gr.update(choices=handlers.lora_choices(ctx, q)),
@@ -1131,7 +1114,7 @@ def build_ui(config: AppConfig) -> gr.Blocks:
         lora_upload.change(
             fn=_refresh_after_upload,
             inputs=[lora_upload, lora_search],
-            outputs=[lora_table, *regional_lora_components],
+            outputs=lora_table,
         )
         insert_lora_btn.click(
             lambda names, p: handlers.insert_lora_triggers(ctx, names, p),
@@ -1196,19 +1179,46 @@ def build_ui(config: AppConfig) -> gr.Blocks:
             regional_enabled,
             regional_layout,
             regional_ratios,
+            regional_base_ratios,
+            regional_overlay_ratio,
+            regional_use_base_prompt,
+            regional_use_common_prompt,
+            regional_use_common_negative,
             regional_common_prompt,
-            regional_base_prompt,
             regional_prompt_text,
             regional_negative_text,
-            regional_use_base_pass,
-            regional_common_loras,
-            regional_region_loras_0,
-            regional_region_loras_1,
-            regional_region_loras_2,
-            regional_region_loras_3,
-            regional_base_strength,
-            regional_region_strength,
+            regional_lora_text,
+            regional_lora_negative_te,
+            regional_lora_negative_unet,
+            regional_lora_stop_step,
         ]
+        regional_preview_btn.click(
+            lambda *args: handlers.preview_regional_masks(ctx, *args),
+            inputs=[
+                mode,
+                img2img_image,
+                canvas_state,
+                prompt,
+                width,
+                height,
+                regional_enabled,
+                regional_layout,
+                regional_ratios,
+                regional_base_ratios,
+                regional_overlay_ratio,
+                regional_use_base_prompt,
+                regional_use_common_prompt,
+                regional_use_common_negative,
+                regional_common_prompt,
+                regional_prompt_text,
+                regional_negative_text,
+                regional_lora_text,
+                regional_lora_negative_te,
+                regional_lora_negative_unet,
+                regional_lora_stop_step,
+            ],
+            outputs=regional_mask_preview,
+        )
         gen_event = generate_btn.click(
             lambda *args: handlers.generate_v2(ctx, *args),
             inputs=gen_inputs,
@@ -1277,18 +1287,18 @@ def build_ui(config: AppConfig) -> gr.Blocks:
                 regional_enabled,
                 regional_layout,
                 regional_ratios,
+                regional_base_ratios,
+                regional_overlay_ratio,
+                regional_use_base_prompt,
+                regional_use_common_prompt,
+                regional_use_common_negative,
                 regional_common_prompt,
-                regional_base_prompt,
                 regional_prompt_text,
                 regional_negative_text,
-                regional_use_base_pass,
-                regional_common_loras,
-                regional_region_loras_0,
-                regional_region_loras_1,
-                regional_region_loras_2,
-                regional_region_loras_3,
-                regional_base_strength,
-                regional_region_strength,
+                regional_lora_text,
+                regional_lora_negative_te,
+                regional_lora_negative_unet,
+                regional_lora_stop_step,
             ],
             outputs=preset_select,
         )
@@ -1321,18 +1331,18 @@ def build_ui(config: AppConfig) -> gr.Blocks:
                 regional_enabled,
                 regional_layout,
                 regional_ratios,
+                regional_base_ratios,
+                regional_overlay_ratio,
+                regional_use_base_prompt,
+                regional_use_common_prompt,
+                regional_use_common_negative,
                 regional_common_prompt,
-                regional_base_prompt,
                 regional_prompt_text,
                 regional_negative_text,
-                regional_use_base_pass,
-                regional_common_loras,
-                regional_region_loras_0,
-                regional_region_loras_1,
-                regional_region_loras_2,
-                regional_region_loras_3,
-                regional_base_strength,
-                regional_region_strength,
+                regional_lora_text,
+                regional_lora_negative_te,
+                regional_lora_negative_unet,
+                regional_lora_stop_step,
             ],
         )
 

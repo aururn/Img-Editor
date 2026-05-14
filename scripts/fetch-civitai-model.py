@@ -23,10 +23,23 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_LORA_DIR = PROJECT_ROOT / "models" / "loras"
+DEFAULT_CHECKPOINT_DIR = PROJECT_ROOT / "models" / "checkpoints"
 CIVITAI_API_BASE = "https://civitai.com/api/v1"
 DEFAULT_GALLERY_LIMIT = 10
 MAX_GALLERY_LIMIT = 10
 LORA_LIKE_TYPES = {"lora", "locon", "loha", "lycoris", "dora"}
+CHECKPOINT_TYPES = {"checkpoint"}
+
+# Fixed download URLs for known checkpoints (model version ID → URL).
+# These override the API-provided downloadUrl to ensure the correct size/fp variant.
+CHECKPOINT_DOWNLOAD_URLS: dict[str, str] = {
+    "889818": "https://civitai.com/api/download/models/889818?type=Model&format=SafeTensor&size=pruned&fp=fp16",
+    "2883731": "https://civitai.red/api/download/models/2883731?type=Model&format=SafeTensor&size=pruned&fp=fp16",
+    "290640": "https://civitai.com/api/download/models/290640?type=Model&format=SafeTensor&size=pruned&fp=fp16",
+    "128078": "https://civitai.com/api/download/models/128078?type=Model&format=SafeTensor&size=pruned&fp=fp16",
+    "384264": "https://civitai.red/api/download/models/384264?type=Model&format=SafeTensor&size=full&fp=fp16",
+    "1190596": "https://civitai.com/api/download/models/1190596?type=Model&format=SafeTensor&size=full&fp=bf16",
+}
 WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -390,6 +403,87 @@ def download_lora_file(
     return result
 
 
+def download_checkpoint_file(
+    model_data: dict[str, Any],
+    source_input: str,
+    api_key: str,
+    output_dir: Path,
+    dry_run: bool,
+) -> dict[str, Any]:
+    model_type = str(model_data.get("type") or "")
+    if model_type and model_type.lower() not in CHECKPOINT_TYPES:
+        return {
+            "status": "skipped",
+            "reason": f"Model type is not a checkpoint: {model_type}",
+            "model_type": model_type,
+        }
+
+    preferred_version_id = extract_model_version_id(source_input)
+    version = choose_model_version(model_data, preferred_version_id)
+    if not version:
+        return {
+            "status": "error",
+            "reason": "No model version found.",
+        }
+
+    version_id = str(version.get("id") or "")
+    file_data = choose_safetensors_file(version)
+    if not file_data:
+        return {
+            "status": "error",
+            "reason": "No .safetensors model file found in the selected version.",
+            "model_version_id": version.get("id"),
+            "model_version_name": version.get("name"),
+        }
+
+    output_root = ensure_within_directory(output_dir, DEFAULT_CHECKPOINT_DIR)
+    output_root.mkdir(parents=True, exist_ok=True)
+    filename = safe_windows_filename(
+        str(file_data.get("name") or ""),
+        f"{model_data.get('name') or 'model'}.safetensors",
+    )
+    target_path = ensure_within_directory(output_root / filename, output_root)
+    if not target_path.suffix.lower() == ".safetensors":
+        target_path = target_path.with_suffix(".safetensors")
+
+    fixed_url = CHECKPOINT_DOWNLOAD_URLS.get(version_id)
+    download_url = (
+        fixed_url
+        or file_data.get("downloadUrl")
+        or version.get("downloadUrl")
+        or f"https://civitai.com/api/download/models/{version_id}?type=Model&format=SafeTensor"
+    )
+    if not isinstance(download_url, str) or not download_url:
+        return {
+            "status": "error",
+            "reason": "No download URL found for the selected file.",
+            "model_version_id": version.get("id"),
+            "filename": filename,
+        }
+
+    result = {
+        "status": "dry_run" if dry_run else "pending",
+        "output_dir": str(output_root),
+        "target_path": str(unique_non_overwriting_path(target_path)),
+        "filename": filename,
+        "model_type": model_type,
+        "model_version_id": version.get("id"),
+        "model_version_name": version.get("name"),
+        "base_model": version.get("baseModel"),
+        "file_size_kb": file_data.get("sizeKB") or file_data.get("sizeKb"),
+        "file_type": file_data.get("type"),
+        "file_metadata": file_data.get("metadata"),
+        "fixed_url_used": fixed_url is not None,
+        "download_url": download_url,
+    }
+    if dry_run:
+        return result
+
+    downloaded = download_file(download_url, api_key, target_path, filename)
+    result.update(downloaded)
+    return result
+
+
 def get_first_value(mapping: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = mapping.get(key)
@@ -664,6 +758,22 @@ def main() -> None:
         action="store_true",
         help="Resolve the selected LoRA file and target path without downloading.",
     )
+    parser.add_argument(
+        "--download-checkpoint",
+        action="store_true",
+        help="Download the selected checkpoint .safetensors file to models/checkpoints.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=DEFAULT_CHECKPOINT_DIR,
+        help="Directory for --download-checkpoint. Defaults to models/checkpoints.",
+    )
+    parser.add_argument(
+        "--checkpoint-dry-run",
+        action="store_true",
+        help="Resolve the selected checkpoint file and target path without downloading.",
+    )
     args = parser.parse_args()
 
     model_id = extract_model_id(args.input)
@@ -749,6 +859,16 @@ def main() -> None:
             args.download_dry_run,
         )
 
+    checkpoint_download: dict[str, Any] | None = None
+    if args.download_checkpoint or args.checkpoint_dry_run:
+        checkpoint_download = download_checkpoint_file(
+            model_data,
+            args.input,
+            api_key,
+            args.checkpoint_dir,
+            args.checkpoint_dry_run,
+        )
+
     emit(
         {
             "ok": True,
@@ -763,6 +883,7 @@ def main() -> None:
             "gallery_prompt_count": len(gallery_prompts),
             "gallery_prompt_errors": gallery_prompt_errors,
             "lora_download": lora_download,
+            "checkpoint_download": checkpoint_download,
         },
         0,
     )

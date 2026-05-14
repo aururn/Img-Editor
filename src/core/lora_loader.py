@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -87,12 +89,42 @@ def _extract_triggers(meta: dict[str, str], top_n: int = 8) -> list[str]:
 class LoRASpec:
     name: str
     weight: float = 0.8
+    text_weight: float | None = None
+    unet_weight: float | None = None
 
     def __post_init__(self) -> None:
         self.weight = float(self.weight)
+        self.text_weight = self.weight if self.text_weight is None else float(self.text_weight)
+        self.unet_weight = self.weight if self.unet_weight is None else float(self.unet_weight)
 
-    def key(self) -> tuple[str, float]:
-        return (self.name, round(self.weight, 4))
+    def key(self) -> tuple[str, float, float, float]:
+        return (
+            self.name,
+            round(self.weight, 4),
+            round(float(self.text_weight), 4),
+            round(float(self.unet_weight), 4),
+        )
+
+    def text_encoder_spec(self) -> "LoRASpec":
+        return LoRASpec(self.name, float(self.text_weight), self.text_weight, self.unet_weight)
+
+    def unet_spec(self) -> "LoRASpec":
+        return LoRASpec(self.name, float(self.unet_weight), self.text_weight, self.unet_weight)
+
+
+def _adapter_name(name: str) -> str:
+    stem = re.sub(r"[^0-9A-Za-z_]+", "_", name).strip("_") or "adapter"
+    digest = hashlib.sha1(name.encode("utf-8", errors="replace")).hexdigest()[:8]
+    return f"lora_{stem[:48]}_{digest}"
+
+
+def _dedupe_specs(specs: list[LoRASpec]) -> list[LoRASpec]:
+    deduped: dict[str, LoRASpec] = {}
+    for spec in specs:
+        if not spec.name:
+            continue
+        deduped[spec.name] = spec
+    return list(deduped.values())
 
 
 @dataclass
@@ -116,6 +148,7 @@ class LoRALoader:
     def __init__(self, loras_dir: str | Path) -> None:
         self.loras_dir = Path(loras_dir)
         self._applied: list[LoRASpec] = []
+        self._loaded_adapters: dict[str, str] = {}
 
     def discover(self) -> list[LoRAEntry]:
         entries: list[LoRAEntry] = []
@@ -192,48 +225,80 @@ class LoRALoader:
     def applied(self) -> list[LoRASpec]:
         return list(self._applied)
 
-    def apply(self, pipeline, specs: list[LoRASpec]) -> None:
-        """Apply the LoRA spec list to ``pipeline``. No-op if unchanged."""
-        current_keys = [s.key() for s in self._applied]
-        new_keys = [s.key() for s in specs]
-        if current_keys == new_keys:
-            return
-
-        try:
-            pipeline.unload_lora_weights()
-        except Exception as exc:
-            logger.debug("unload_lora_weights raised: %s", exc)
-
-        adapter_names: list[str] = []
-        weights: list[float] = []
+    def ensure_loaded(self, pipeline, specs: list[LoRASpec]) -> None:
+        """Load all LoRA adapters needed by ``specs`` if they are not loaded."""
         for spec in specs:
+            if spec.name in self._loaded_adapters:
+                continue
             file_path = self.file_for(spec.name)
             if not file_path:
                 logger.warning("LoRA file not found: %s", spec.name)
                 continue
-            adapter = spec.name.replace(".", "_")
+            adapter = _adapter_name(spec.name)
             try:
                 pipeline.load_lora_weights(
                     str(file_path.parent),
                     weight_name=file_path.name,
                     adapter_name=adapter,
                 )
-                adapter_names.append(adapter)
-                weights.append(spec.weight)
+                self._loaded_adapters[spec.name] = adapter
+                logger.info("Loaded LoRA adapter %s as %s", spec.name, adapter)
             except Exception as exc:
                 logger.exception("Failed to load LoRA %s: %s", spec.name, exc)
 
-        if adapter_names:
-            try:
-                pipeline.set_adapters(adapter_names, adapter_weights=weights)
-            except Exception as exc:
-                logger.warning("set_adapters failed: %s", exc)
+    def set_active(self, pipeline, specs: list[LoRASpec]) -> None:
+        """Set active LoRA weights without unloading already loaded adapters."""
+        specs = _dedupe_specs(specs)
+        current_keys = [s.key() for s in self._applied]
+        new_keys = [s.key() for s in specs]
+        if current_keys == new_keys:
+            return
 
-        self._applied = list(specs)
-        logger.info("Applied LoRAs: %s", [s.key() for s in specs])
+        self.ensure_loaded(pipeline, specs)
+        if not self._loaded_adapters:
+            self._applied = []
+            return
+
+        requested = {
+            self._loaded_adapters[spec.name]: float(spec.weight)
+            for spec in specs
+            if spec.name in self._loaded_adapters
+        }
+        adapter_names = list(self._loaded_adapters.values())
+        weights = [requested.get(adapter, 0.0) for adapter in adapter_names]
+        try:
+            pipeline.set_adapters(adapter_names, adapter_weights=weights)
+        except Exception as exc:
+            logger.warning("set_adapters failed: %s", exc)
+        self._applied = [
+            spec for spec in specs if spec.name in self._loaded_adapters
+        ]
+        logger.debug("Active LoRAs: %s", [s.key() for s in self._applied])
+
+    def apply(self, pipeline, specs: list[LoRASpec]) -> None:
+        """Apply the LoRA spec list to ``pipeline``. No-op if unchanged."""
+        self.set_active(pipeline, specs)
+
+    def set_active_for_text_encoder(self, pipeline, specs: list[LoRASpec]) -> None:
+        self.set_active(pipeline, [spec.text_encoder_spec() for spec in specs])
+
+    def set_active_for_unet(self, pipeline, specs: list[LoRASpec]) -> None:
+        self.set_active(pipeline, [spec.unet_spec() for spec in specs])
+
+    def disable(self, pipeline) -> None:
+        if not self._loaded_adapters:
+            self._applied = []
+            return
+        adapter_names = list(self._loaded_adapters.values())
+        try:
+            pipeline.set_adapters(adapter_names, adapter_weights=[0.0] * len(adapter_names))
+        except Exception as exc:
+            logger.warning("disable LoRA adapters failed: %s", exc)
+        self._applied = []
 
     def unload_all(self, pipeline) -> None:
         try:
             pipeline.unload_lora_weights()
         finally:
             self._applied = []
+            self._loaded_adapters = {}

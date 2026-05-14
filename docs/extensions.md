@@ -45,57 +45,62 @@ txt2img / img2img / inpaint のすべてのモードに対応します。
 
 ## Regional Prompter
 
-領域ごとに別プロンプトと **領域別 LoRA** を適用します。本家 A1111 の Attention/Latent
-Couple 方式ではなく、**「下地生成 → 領域ごとに LoRA を切り替えてインペイント」方式**
-(段階インペイント方式)で実装されています。
+領域ごとに別プロンプトを適用します。実装は hako-mikan
+[sd-webui-regional-prompter](https://github.com/hako-mikan/sd-webui-regional-prompter) の
+**Latent Couple 方式**を Diffusers 向けに移植した**単一denoise内UNetブレンド方式**です。
+各 UNet ステップで base CFG + 領域ごとの CFG 計算を行い、ラテント空間のマスクで
+ノイズ予測をブレンドするため、ステージ分割 inpaint と異なり繋ぎ目が出ません。
 
-### 方式の特徴
-
-- **キャラ LoRA の混線が起きない** — キャラA LoRA と キャラB LoRA を同時に全体適用すると
-  両者の特徴が混ざってしまう問題を、LoRA を **領域ごとに逐次切り替える** ことで完全に
-  回避します。
-- **想定用途**: キャラA LoRA × キャラB LoRA × シチュエーション LoRA で 2 キャラ構図を生成。
+LoRA は左パネルで選択したものを全領域に共通適用できます。さらに Region LoRAs 欄や
+region prompt 内の `<lora:name:weight>` / `<lora:name:text_weight:unet_weight>` タグで、
+領域ごとに Text Encoder 用 LoRA 重みと U-Net 用 LoRA 重みを切り替えられます。
 
 ### パラメータ
 
 | 項目 | 説明 |
 |---|---|
 | Layout | `horizontal` / `vertical` / `grid` / `mask` |
-| Ratios | `1,2,1` のように比率指定(空欄なら均等分割) |
+| Ratios | `1,2,1` のように比率指定。`1,1;2,1` のような2D比率も可 |
+| Base ratio | base prompt と region prompt の混合比。空欄なら `0.2` |
+| Overlay ratio | 隣接領域を少し重ねて境界の急な切り替わりを抑える比率 |
+| Use base prompt | 互換用フラグ。Region prompts の先頭要素は消費しない。base prompt は通常メイン Prompt、`ADDBASE` で明示指定 |
+| Use common prompt | 互換用フラグ。Region prompts の先頭要素は消費しない。Common prompt 欄と `ADDCOMM` を共通タグとして使用 |
+| Use common negative prompt | region negative の先頭要素を全領域の共通ネガティブにする |
 | Common prompt | 全領域に必ず付与 |
-| Base prompt | 下地生成用プロンプト(構図を決める) |
-| Region prompts | 領域ごとのプロンプト(`BREAK` または改行区切り、最大 4 領域) |
+| Base prompt | メイン Prompt。`ADDBASE` 使用時は region prompt 側の先頭要素をbase扱い |
+| Region prompts | 領域ごとのプロンプト(`BREAK` / `ADDROW` / `ADDCOL` / 改行区切り、最大 4 領域) |
 | Region negatives | 領域ごとのネガティブ(任意、`BREAK` 区切り) |
-| Run base pass before regions | img2img/inpaint でも下地生成パスを先に実行(**推奨 ON**) |
-| **Common LoRAs** | **下地パス + 全領域**に常時適用される LoRA(シチュ/スタイル LoRA 想定) |
-| **Region 1〜4 LoRAs** | **その領域のインペイント時のみ**適用される LoRA(キャラ LoRA 想定) |
-| Base strength | 下地パス(img2img/inpaint)の strength |
-| Region strength | 各領域のインペイント strength |
+| Region LoRAs | 領域ごとの LoRA 指定。`BREAK` 区切りで `<lora:left:0.8>` / `name@0.6/0.9` などを指定 |
+| LoRA negative TE / U-Net | 対象外領域で region LoRA をどれだけ残すか。空欄または `0` なら対象外では無効 |
+| LoRA stop step | 指定step以降、region専用LoRAを止めて共通LoRAだけでUNet計算する |
+| Preview masks | 「Preview masks」ボタンで現在の設定に基づく領域マスクをプレビュー表示する |
 
-### 推奨ワークフロー (例: キャラA × キャラB × シチュC)
+### 構文
 
-1. **Common LoRAs**: `situation_C @ 0.9` を選択
-2. **Base prompt**: `2girls, classroom, looking at each other, ...`
-3. **Region prompts**:
-   ```
-   1girl, [characterA_trigger], black hair
-   BREAK
-   1girl, [characterB_trigger], blonde hair
-   ```
-4. **Region 1 LoRAs**: `characterA @ 0.9`
-5. **Region 2 LoRAs**: `characterB @ 0.9`
-6. **Run base pass before regions**: ON
-7. **Region strength**: 0.75 程度(境界が気になるなら下げる)
+```text
+left prompt BREAK right prompt
+```
+
+```text
+top-left ADDCOL top-right ADDROW bottom-left ADDCOL bottom-right
+```
+
+```text
+common tags ADDCOMM base tags ADDBASE left prompt BREAK right prompt
+```
+
+`ADDCOMM` がある場合は先頭要素を common prompt に追加します。
+`ADDBASE` がある場合は次の要素を base prompt として使います。
+
+記事でよく使われる `1;3,1,1` のような比率は、上段1領域・下段3領域のような2D分割として解釈されます。
 
 ### 制限と注意
 
 - **最大 4 領域**。それ以上の `BREAK` は切り捨てられます。
-- **領域別 LoRA を切り替えるたびに `unload_lora_weights → load_lora_weights` が走る**ため、
-  領域数だけ生成時間が増加します(2 領域なら ~2 倍 + LoRA ロード分)。
-- **境界に縫い目が出やすい** ため、`mask_blur` を大きめに設定するのが安全です。
+- 左パネルの LoRA は全領域に共通適用されます。Region LoRAs や inline LoRA tag は指定した領域だけに追加適用されます。
+- 領域数ぶんUNet追加計算が走るため、通常生成より遅くなります。
+- `mask` layout は色分けマスクに対応します。キャンバスで赤・緑・青など別色を塗ると、region prompt の順に割り当てられます。
 - **OOM フォールバック時は Regional Prompter は無効化** され、通常生成にフォールバックします。
-- **キャンセル**は領域ループの途中でも効きます(現在処理中の領域を完了して停止 ではなく、
-  即座に途中で抜けます)。
 
 ## 自動目検出 inpaint
 

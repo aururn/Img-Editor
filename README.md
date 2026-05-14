@@ -91,7 +91,7 @@ python app.py --config ./config.yaml               # 設定ファイルを差し
 | F-10 | Textual Inversion Embeddings 対応 |
 | F-11 | ControlNet 対応(Canny 前処理含む。txt2img/img2img/inpaint 全モード) |
 | F-12 | IP-Adapter 対応 |
-| F-13 | Regional Prompter(BREAK 構文、水平/垂直/グリッド/マスク、**領域別LoRA 対応**。段階インペイント方式) |
+| F-13 | Regional Prompter(BREAK / ADDROW / ADDCOL / ADDBASE / ADDCOMM 構文、水平/垂直/グリッド/色分けマスク、base ratio / overlay ratio、**領域別LoRA・インライン LoRA タグ・LoRA negative ratio・LoRA stop step 対応**、プレビューマスク表示。hako-mikan 方式 Latent Couple — 単一 denoise 内 UNet ブレンド) |
 | F-14 | 起動時診断レポート(GPU / モデル / VRAM) |
 | F-15 | 生成キャンセル、OOM 自動リトライ(0.75x 縮小フォールバック) |
 
@@ -155,11 +155,11 @@ ap/
 - GPU: **RTX 5090 (32GB)**
 - Python: **3.14.3** (`/venv/main/bin/python3`)
 - PyTorch: **2.11.0+cu130** (テンプレートにプリインストール済)
-- 作業ディレクトリ: `/workspace/EyeEditor`
+- 作業ディレクトリ: `/workspace/ImgEditor`
 
 `requirements.txt` は CUDA イメージ側で torch を入れる前提のため `torch`/`torchvision`
-を pin していません。Python 3.14 環境では `pip install -r requirements.txt` 後に
-**`gradio<6` (5系)** を追加で入れる必要があります(`process.txt` Step 5③ 参照)。
+を pin していません。Python 3.14 環境でも古い `pydantic-core` をビルドしないように、
+Gradio 5系と `pydantic>=2.12` を前提にしています。
 
 ## ライセンス・利用規約
 - 本アプリケーションコード本体: MIT(LICENSE は別途必要に応じて配置)
