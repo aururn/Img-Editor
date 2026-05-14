@@ -28,7 +28,7 @@ Gradio を使ったブラウザUIで動作し、テキストからの画像生�
 |------|------|
 | **4つの生成モード** | txt2img / img2img / 手動インペイント / 瞳自動検出インペイント |
 | **LoRA 多重適用** | 複数LoRAを重みつきで同時使用。トリガーワード自動挿入 |
-| **Regional Prompter** | 画面を複数エリアに分割し、エリアごとに別キャラLoRAを適用 |
+| **Regional Prompter** | 画面を複数エリアに分割し、エリアごとに別プロンプトを適用 |
 | **ControlNet** | Canny エッジ抽出またはカスタム画像による構図制御 |
 | **IP-Adapter** | 参照画像からスタイル・外見を誘導 |
 | **Textual Inversion** | 埋め込みトークンによるスタイル固定 |
@@ -75,7 +75,7 @@ Gradio を使ったブラウザUIで動作し、テキストからの画像生�
 ### 基本
 
 ```bash
-cd /workspace/EyeEditor
+cd /workspace/ImgEditor
 python app.py
 ```
 
@@ -234,11 +234,19 @@ masterpiece, best quality, 1girl, solo, looking at viewer, empty eyes
    - `grid`: グリッド配置
    - `mask`: キャンバスで描いたマスクで分割
 3. **Ratios** で各エリアの比率を指定（例: `1,2,1` で左:中:右 = 1:2:1）
-4. **Common LoRAs**: 全エリアに共通で適用するLoRA（状況・スタイルLoRAなど）
-5. **Region 1〜4**: エリアごとに専用LoRAを設定（キャラLoRAなど）
-6. **Region prompts**: エリアごとのプロンプト（`BREAK` または改行で区切る）
+4. **Base ratio**: base prompt と region prompt の混合比。空欄なら `0.2`
+5. **Overlay ratio**: 隣接領域を少し重ねて境界の急な切り替わりを抑える比率
+6. **Use base/common**: 互換用フラグ。Region prompts の先頭要素は消費しません
+7. **Common prompt**: 全エリアに共通で付与するタグ。Region prompts 内で指定する場合は `ADDCOMM` / `ADDBASE` を使います
+8. **Region prompts**: エリアごとのプロンプト（`BREAK` / `ADDROW` / `ADDCOL` / 改行で区切る）
+9. **Region LoRAs**: エリアごとの LoRA（`<lora:left:0.8> BREAK <lora:right:0.8>` など）
+10. **LoRA negative TE / U-Net**: 対象外エリアに他エリアのLoRAをどれだけ残すか（通常は `0`）
+11. **LoRA stop step**: 指定step以降、エリア専用LoRAを止めて侵食を抑える
+12. **Preview masks**: 分割/色分けマスクを生成前に確認
 
-> **BREAK 構文**: A1111 Regional Prompter 互換。`left prompt BREAK right prompt`
+> **Regional 構文**: `BREAK` / `ADDROW` / `ADDCOL` / `ADDBASE` / `ADDCOMM` に対応。
+> LoRAタグは `name:weight` または `name:text_weight:unet_weight` に対応します。
+> `mask` layout ではキャンバスの赤・緑・青などの色ごとに別エリアとして扱います。
 
 ### ControlNet の使い方
 
@@ -396,7 +404,7 @@ app.py
        └── handlers.py    ← UIイベントハンドラ
             └── InferenceService.run()   ← 推論エンジン
                  ├── PipelineManager     ← diffusers パイプライン管理
-                 ├── LoRALoader          ← LoRA 動的ロード
+                 ├── LoRALoader          ← LoRA 読み込み
                  ├── EyeDetector         ← YOLOv8 瞳検出
                  └── RegionalPipeline    ← エリア分割生成
 ```
@@ -424,26 +432,24 @@ app.py
    │   └── inpaint → StableDiffusionXLInpaintPipeline
    └── Regional パイプライン（エリア分割）
        ├── ベースパス（共通LoRA）
-       └── エリアごとのLoRAスワップ + インペイント
+       └── エリアごとのLoRAスワップ + UNetブレンド
 
 6. 出力処理
    └── PNG保存・A1111メタデータ埋め込み・履歴追加
 ```
 
-### LoRA 動的スワップ（Regional Prompter）
+### Regional Prompter
 
-Regional Prompter の核心実装です。異なるキャラLoRAを各エリアに適用する際、LoRAが互いに干渉するのを防ぐため、エリアごとにLoRAを入れ替えながら段階的インペイントを行います。
+Regional Prompter の核心実装です。UNet のdenoise中に、領域ごとの positive / negative prompt 条件をマスクでブレンドします。左パネルの LoRA は全領域に共通適用され、Region LoRAs や `<lora:name:weight>` タグで指定した LoRA は領域ごとに切り替えられます。
 
 ```
-共通LoRA + ベースプロンプト → ベース画像生成
+base prompt / negative を通常どおりエンコード
   ↓
-エリア1: [共通LoRA + エリア1LoRA] でエリア1のマスク領域をインペイント
+各 region prompt / region negative をエンコード
   ↓
-エリア2: [共通LoRA + エリア2LoRA] でエリア2のマスク領域をインペイント
+UNet forward 内で latent mask ごとに noise prediction をブレンド
   ↓
-...
-  ↓
-最終結果
+txt2img / img2img / inpaint の各パイプラインが通常どおり画像化
 ```
 
 ### 長プロンプト対応（>77トークン）

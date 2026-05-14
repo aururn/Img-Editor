@@ -1,6 +1,7 @@
 """Gradio event handlers for Img Editor."""
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,7 +24,7 @@ from ..core import (
     discover_ip_adapters,
 )
 from ..core.assets import EmbeddingSpec, IPAdapterSpec
-from ..core.regional import RegionalPromptSpec, normalize_spec
+from ..core.regional import build_region_masks, normalize_spec
 from ..detection import EyeDetector, MaskBuilder
 from ..utils import resize_if_needed, save_image_with_metadata
 from ..utils.logger import get_logger
@@ -380,12 +381,132 @@ def _regional_mask(layout: str, canvas_state: Any, image: Image.Image | None) ->
     if canvas_state is None:
         return None
     try:
-        mask = MaskBuilder.from_user_canvas(canvas_state)
+        mask = MaskBuilder.from_user_canvas_regions(canvas_state)
     except Exception:
         return None
     if image is not None and mask.size != image.size:
-        mask = mask.resize(image.size, Image.BILINEAR)
+        mask = mask.resize(image.size, Image.NEAREST)
     return mask
+
+
+def _regional_preview_base(
+    mode_label: str,
+    img2img_image,
+    canvas_state,
+    width: int,
+    height: int,
+    max_size: int,
+) -> Image.Image:
+    mode_key = _mode_key(mode_label)
+    image: Image.Image | None = None
+    if mode_key == "img2img":
+        image = _prepare_input_image(img2img_image, max_size)
+    elif mode_key.startswith("inpaint"):
+        image = _prepare_input_image(_canvas_image(canvas_state), max_size)
+    if image is not None:
+        return image
+    return Image.new("RGB", (max(8, int(width)), max(8, int(height))), (246, 248, 252))
+
+
+def _render_mask_preview(base: Image.Image, masks: list[Image.Image]) -> Image.Image:
+    colors = [
+        (239, 68, 68),
+        (34, 197, 94),
+        (59, 130, 246),
+        (245, 158, 11),
+        (168, 85, 247),
+        (20, 184, 166),
+    ]
+    out = base.convert("RGBA")
+    size = out.size
+    for index, mask in enumerate(masks):
+        if mask.size != size:
+            mask = mask.resize(size, Image.BILINEAR)
+        color = colors[index % len(colors)]
+        transparent = Image.new("RGBA", size, (*color, 0))
+        tinted = Image.new("RGBA", size, (*color, 125))
+        out = Image.alpha_composite(out, Image.composite(tinted, transparent, mask.convert("L")))
+    return out.convert("RGB")
+
+
+def _simple_ratio_count(ratios: str) -> int:
+    if not ratios or ";" in ratios:
+        return 0
+    count = 0
+    for token in re.split(r"[,:\s]+", ratios):
+        if not token:
+            continue
+        try:
+            if float(token) > 0:
+                count += 1
+        except ValueError:
+            continue
+    return count
+
+
+def _validate_regional_ratio_count(spec, ratios: str) -> None:
+    ratio_count = _simple_ratio_count(ratios)
+    region_count = len(spec.region_prompts)
+    if ratio_count > 1 and region_count < ratio_count and not spec.region_boxes:
+        raise gr.Error(
+            f"Ratios has {ratio_count} values, but Region prompts has only "
+            f"{region_count} region(s). Add BREAK-separated region prompts."
+        )
+
+
+def preview_regional_masks(
+    ctx: HandlerContext,
+    mode_label: str,
+    img2img_image,
+    canvas_state,
+    prompt: str,
+    width: int,
+    height: int,
+    regional_enabled: bool,
+    regional_layout: str,
+    regional_ratios: str,
+    regional_base_ratios: str,
+    regional_overlay_ratio: float,
+    regional_use_base_prompt: bool,
+    regional_use_common_prompt: bool,
+    regional_use_common_negative: bool,
+    regional_common_prompt: str,
+    regional_prompt_text: str,
+    regional_negative_text: str,
+    regional_lora_text: str,
+    regional_lora_negative_te: str,
+    regional_lora_negative_unet: str,
+    regional_lora_stop_step: int,
+):
+    max_size = int(ctx.config.limits.get("max_image_size", 2048))
+    base = _regional_preview_base(mode_label, img2img_image, canvas_state, width, height, max_size)
+    regional_mask = _regional_mask(regional_layout, canvas_state, base)
+    if (regional_layout or "").lower() == "mask" and regional_mask is None:
+        raise gr.Error("Mask layout needs a painted color mask on the canvas")
+    spec = normalize_spec(
+        enabled=True,
+        layout=regional_layout,
+        ratios=regional_ratios,
+        base_ratios=regional_base_ratios,
+        overlay_ratio=float(regional_overlay_ratio or 0.0),
+        use_base_prompt=bool(regional_use_base_prompt),
+        use_common_prompt=bool(regional_use_common_prompt),
+        use_common_negative=bool(regional_use_common_negative),
+        lora_negative_text_encoder_ratios=regional_lora_negative_te,
+        lora_negative_unet_ratios=regional_lora_negative_unet,
+        lora_stop_step=int(regional_lora_stop_step or 0),
+        common_prompt=regional_common_prompt,
+        region_prompt_text=regional_prompt_text,
+        region_negative_text=regional_negative_text,
+        region_lora_text=regional_lora_text,
+        fallback_prompt=prompt or "region",
+        mask=regional_mask,
+    )
+    if not spec.enabled:
+        raise gr.Error("Add at least one region prompt")
+    _validate_regional_ratio_count(spec, regional_ratios)
+    masks = build_region_masks(spec, base.size)
+    return _render_mask_preview(base, masks)
 
 
 def generate_v2(
@@ -418,18 +539,18 @@ def generate_v2(
     regional_enabled: bool,
     regional_layout: str,
     regional_ratios: str,
+    regional_base_ratios: str,
+    regional_overlay_ratio: float,
+    regional_use_base_prompt: bool,
+    regional_use_common_prompt: bool,
+    regional_use_common_negative: bool,
     regional_common_prompt: str,
-    regional_base_prompt: str,
     regional_prompt_text: str,
     regional_negative_text: str,
-    regional_use_base_pass: bool,
-    regional_common_lora_rows=None,
-    regional_region_lora_rows_0=None,
-    regional_region_lora_rows_1=None,
-    regional_region_lora_rows_2=None,
-    regional_region_lora_rows_3=None,
-    regional_base_strength: float | None = None,
-    regional_region_strength: float | None = None,
+    regional_lora_text: str,
+    regional_lora_negative_te: str,
+    regional_lora_negative_unet: str,
+    regional_lora_stop_step: int,
 ):
     if not prompt or not prompt.strip():
         raise gr.Error("Prompt is required")
@@ -469,35 +590,27 @@ def generate_v2(
     regional_mask = _regional_mask(regional_layout, canvas_state, image)
     if regional_enabled and (regional_layout or "").lower() == "mask" and regional_mask is None:
         raise gr.Error("Regional mask layout needs a painted mask on the canvas")
-    common_loras_specs = parse_lora_table(regional_common_lora_rows, ctx)
-    per_region_loras = [
-        parse_lora_table(regional_region_lora_rows_0, ctx),
-        parse_lora_table(regional_region_lora_rows_1, ctx),
-        parse_lora_table(regional_region_lora_rows_2, ctx),
-        parse_lora_table(regional_region_lora_rows_3, ctx),
-    ]
     regional = normalize_spec(
         enabled=regional_enabled,
         layout=regional_layout,
         ratios=regional_ratios,
+        base_ratios=regional_base_ratios,
+        overlay_ratio=float(regional_overlay_ratio or 0.0),
+        use_base_prompt=bool(regional_use_base_prompt),
+        use_common_prompt=bool(regional_use_common_prompt),
+        use_common_negative=bool(regional_use_common_negative),
+        lora_negative_text_encoder_ratios=regional_lora_negative_te,
+        lora_negative_unet_ratios=regional_lora_negative_unet,
+        lora_stop_step=int(regional_lora_stop_step or 0),
         common_prompt=regional_common_prompt,
-        base_prompt=regional_base_prompt,
         region_prompt_text=regional_prompt_text,
         region_negative_text=regional_negative_text,
+        region_lora_text=regional_lora_text,
         fallback_prompt=prompt,
-        use_base_pass=regional_use_base_pass,
         mask=regional_mask,
-        common_loras=common_loras_specs,
-        region_loras=per_region_loras,
-        base_strength=(
-            float(regional_base_strength) if regional_base_strength is not None else None
-        ),
-        region_strength=(
-            float(regional_region_strength)
-            if regional_region_strength is not None
-            else None
-        ),
     )
+    if regional_enabled:
+        _validate_regional_ratio_count(regional, regional_ratios)
 
     req = GenerationRequest(
         mode=mode_key,  # type: ignore[arg-type]
@@ -588,18 +701,18 @@ def save_preset(
     regional_enabled: bool,
     regional_layout: str,
     regional_ratios: str,
+    regional_base_ratios: str,
+    regional_overlay_ratio: float,
+    regional_use_base_prompt: bool,
+    regional_use_common_prompt: bool,
+    regional_use_common_negative: bool,
     regional_common_prompt: str,
-    regional_base_prompt: str,
     regional_prompt_text: str,
     regional_negative_text: str,
-    regional_use_base_pass: bool,
-    regional_common_lora_rows=None,
-    regional_region_lora_rows_0=None,
-    regional_region_lora_rows_1=None,
-    regional_region_lora_rows_2=None,
-    regional_region_lora_rows_3=None,
-    regional_base_strength: float | None = None,
-    regional_region_strength: float | None = None,
+    regional_lora_text: str,
+    regional_lora_negative_te: str,
+    regional_lora_negative_unet: str,
+    regional_lora_stop_step: int,
 ):
     if not name or not name.strip():
         raise gr.Error("Preset name is required")
@@ -630,37 +743,18 @@ def save_preset(
             "enabled": bool(regional_enabled),
             "layout": regional_layout,
             "ratios": regional_ratios,
+            "base_ratios": regional_base_ratios,
+            "overlay_ratio": float(regional_overlay_ratio or 0.0),
+            "use_base_prompt": bool(regional_use_base_prompt),
+            "use_common_prompt": bool(regional_use_common_prompt),
+            "use_common_negative": bool(regional_use_common_negative),
             "common_prompt": regional_common_prompt,
-            "base_prompt": regional_base_prompt,
             "region_prompt_text": regional_prompt_text,
             "region_negative_text": regional_negative_text,
-            "use_base_pass": bool(regional_use_base_pass),
-            "common_loras": [
-                {"name": s.name, "weight": s.weight}
-                for s in parse_lora_table(regional_common_lora_rows, ctx)
-            ],
-            "region_loras": [
-                [
-                    {"name": s.name, "weight": s.weight}
-                    for s in parse_lora_table(rows, ctx)
-                ]
-                for rows in (
-                    regional_region_lora_rows_0,
-                    regional_region_lora_rows_1,
-                    regional_region_lora_rows_2,
-                    regional_region_lora_rows_3,
-                )
-            ],
-            "base_strength": (
-                float(regional_base_strength)
-                if regional_base_strength is not None
-                else None
-            ),
-            "region_strength": (
-                float(regional_region_strength)
-                if regional_region_strength is not None
-                else None
-            ),
+            "region_lora_text": regional_lora_text,
+            "lora_negative_text_encoder_ratios": regional_lora_negative_te,
+            "lora_negative_unet_ratios": regional_lora_negative_unet,
+            "lora_stop_step": int(regional_lora_stop_step or 0),
         },
     }
     presets.save_preset(ctx.config.path("presets_dir"), name, data)
@@ -679,20 +773,6 @@ def load_preset(ctx: HandlerContext, name: str):
     control = data.get("controlnet", {})
     ip = data.get("ip_adapter", {})
     regional = data.get("regional", {})
-
-    def _names_from_lora_list(items):
-        return [
-            entry["name"]
-            for entry in (items or [])
-            if isinstance(entry, dict) and entry.get("name") in known
-        ]
-
-    regional_common_names = _names_from_lora_list(regional.get("common_loras"))
-    region_loras_raw = regional.get("region_loras") or []
-    region_names: list[list[str]] = []
-    for i in range(4):
-        row = region_loras_raw[i] if i < len(region_loras_raw) else []
-        region_names.append(_names_from_lora_list(row))
 
     return (
         data.get("mode", TXT2IMG),
@@ -719,16 +799,16 @@ def load_preset(ctx: HandlerContext, name: str):
         regional.get("enabled", False),
         regional.get("layout", "horizontal"),
         regional.get("ratios", ""),
+        regional.get("base_ratios", ""),
+        regional.get("overlay_ratio", 0.0),
+        regional.get("use_base_prompt", False),
+        regional.get("use_common_prompt", False),
+        regional.get("use_common_negative", False),
         regional.get("common_prompt", ""),
-        regional.get("base_prompt", ""),
         regional.get("region_prompt_text", ""),
         regional.get("region_negative_text", ""),
-        regional.get("use_base_pass", False),
-        regional_common_names,
-        region_names[0],
-        region_names[1],
-        region_names[2],
-        region_names[3],
-        regional.get("base_strength"),
-        regional.get("region_strength"),
+        regional.get("region_lora_text", ""),
+        regional.get("lora_negative_text_encoder_ratios", ""),
+        regional.get("lora_negative_unet_ratios", ""),
+        regional.get("lora_stop_step", 0),
     )

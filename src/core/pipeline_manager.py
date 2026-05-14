@@ -312,11 +312,32 @@ class PipelineManager:
         except Exception as exc:
             logger.exception("Failed to set sampler %s: %s", name, exc)
 
-    def apply_loras(self, specs: list[LoRASpec]) -> None:
-        primary = self._txt2img_pipe or self._img2img_pipe or self._inpaint_pipe
+    def _primary_pipe(self):
+        return self._txt2img_pipe or self._img2img_pipe or self._inpaint_pipe
+
+    def apply_loras(self, specs: list[LoRASpec], pipe=None) -> None:
+        primary = pipe or self._primary_pipe()
         if primary is None:
             return
         self.lora_loader.apply(primary, specs)
+
+    def set_active_loras(self, specs: list[LoRASpec], pipe=None) -> None:
+        primary = pipe or self._primary_pipe()
+        if primary is None:
+            return
+        self.lora_loader.set_active(primary, specs)
+
+    def set_active_text_loras(self, specs: list[LoRASpec], pipe=None) -> None:
+        primary = pipe or self._primary_pipe()
+        if primary is None:
+            return
+        self.lora_loader.set_active_for_text_encoder(primary, specs)
+
+    def set_active_unet_loras(self, specs: list[LoRASpec], pipe=None) -> None:
+        primary = pipe or self._primary_pipe()
+        if primary is None:
+            return
+        self.lora_loader.set_active_for_unet(primary, specs)
 
     def apply_textual_inversions(self, pipe, specs: list[EmbeddingSpec]) -> None:
         if not specs:

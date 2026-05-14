@@ -79,6 +79,46 @@ class MaskBuilder:
         raise TypeError(f"Unsupported canvas type: {type(canvas_image)!r}")
 
     @staticmethod
+    def from_user_canvas_regions(canvas_image) -> Image.Image:
+        """Extract a color-preserving regional mask from ImageEditor layers.
+
+        The regular inpaint mask only needs alpha. Regional mask mode benefits
+        from paint colors, because each non-black color can become a separate
+        region.
+        """
+        if isinstance(canvas_image, dict):
+            layers = canvas_image.get("layers") or []
+            background = canvas_image.get("background")
+            composite = canvas_image.get("composite")
+
+            base_size = None
+            if background is not None:
+                base_size = background.size
+            elif composite is not None:
+                base_size = composite.size
+            elif layers:
+                base_size = layers[0].size
+            if base_size is None:
+                raise ValueError("ImageEditor returned no usable layers")
+
+            region = Image.new("RGBA", base_size, (0, 0, 0, 0))
+            for layer in layers:
+                layer_rgba = layer.convert("RGBA")
+                if layer_rgba.size != base_size:
+                    layer_rgba = layer_rgba.resize(base_size, Image.NEAREST)
+                region = Image.alpha_composite(region, layer_rgba)
+
+            if layers:
+                return region
+            if composite is not None and composite.mode == "RGBA":
+                return composite
+            return MaskBuilder.from_user_canvas(canvas_image)
+
+        if isinstance(canvas_image, Image.Image):
+            return canvas_image.convert("RGBA") if canvas_image.mode != "L" else canvas_image
+        raise TypeError(f"Unsupported canvas type: {type(canvas_image)!r}")
+
+    @staticmethod
     def feather(mask: Image.Image, radius: int) -> Image.Image:
         if radius <= 0:
             return mask

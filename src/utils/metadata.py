@@ -71,19 +71,42 @@ def build_parameters_string(meta: dict[str, Any]) -> str:
         parts.append(
             f"Regional: {regional.get('layout', '')}; ratios={regional.get('ratios', '')}"
         )
+        if regional.get("lora_stop_step"):
+            parts.append(f"Regional LoRA stop step: {regional.get('lora_stop_step')}")
+        if regional.get("lora_negative_text_encoder_ratios"):
+            parts.append(
+                "Regional LoRA negative TE: "
+                + str(regional.get("lora_negative_text_encoder_ratios"))
+            )
+        if regional.get("lora_negative_unet_ratios"):
+            parts.append(
+                "Regional LoRA negative U-Net: "
+                + str(regional.get("lora_negative_unet_ratios"))
+            )
+        def _fmt_loras(items):
+            return ", ".join(
+                f"{s['name']}:{s.get('weight', '')}" for s in items
+            )
+
         common_loras = regional.get("common_loras") or []
         if common_loras:
             parts.append(
                 "Regional common LoRAs: "
-                + ", ".join(f"{s['name']}:{s['weight']}" for s in common_loras)
+                + _fmt_loras(common_loras)
+            )
+        base_loras = regional.get("base_loras") or []
+        if base_loras:
+            parts.append(
+                "Regional base LoRAs: "
+                + _fmt_loras(base_loras)
             )
         region_loras = regional.get("region_loras") or []
         for idx, row in enumerate(region_loras):
             if not row:
                 continue
             parts.append(
-                f"Regional region {idx} LoRAs: "
-                + ", ".join(f"{s['name']}:{s['weight']}" for s in row)
+                f"Regional region {idx + 1} LoRAs: "
+                + _fmt_loras(row)
             )
 
     lines = [prompt]

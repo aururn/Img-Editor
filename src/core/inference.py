@@ -13,7 +13,12 @@ from ..utils.logger import get_logger
 from .assets import EmbeddingSpec, IPAdapterSpec
 from .lora_loader import LoRASpec
 from .pipeline_manager import PipelineManager
-from .regional import RegionalPromptSpec, build_region_masks, combine_prompt
+from .regional import (
+    RegionalPromptSpec,
+    build_region_masks,
+    combine_prompt,
+    parse_lora_negative_ratios,
+)
 
 logger = get_logger(__name__)
 
@@ -46,6 +51,7 @@ class GenerationRequest:
     ip_adapter_image: Image.Image | None = None
     ip_adapter_scale: float = 1.0
     regional: RegionalPromptSpec | None = None
+    loras_prepared: bool = False
 
 
 @dataclass
@@ -119,7 +125,8 @@ class InferenceService:
 
     def _prepare_pipe(self, pipe, req: GenerationRequest) -> None:
         self.pm.set_sampler(req.sampler)
-        self.pm.apply_loras(req.loras)
+        if not req.loras_prepared:
+            self.pm.apply_loras(req.loras, pipe)
         self.pm.apply_textual_inversions(pipe, req.embeddings)
         if req.ip_adapter and req.ip_adapter_image is not None:
             self.pm.apply_ip_adapter(pipe, req.ip_adapter, req.ip_adapter_scale)
@@ -193,7 +200,15 @@ class InferenceService:
             "width": image.width,
             "height": image.height,
             "model": self.pm.current_checkpoint(),
-            "loras": [{"name": s.name, "weight": s.weight} for s in req.loras],
+            "loras": [
+                {
+                    "name": s.name,
+                    "weight": s.weight,
+                    "text_weight": s.text_weight,
+                    "unet_weight": s.unet_weight,
+                }
+                for s in req.loras
+            ],
             "embeddings": [{"name": e.name, "token": e.token} for e in req.embeddings],
             "mode": req.mode,
             "mask_blur": req.mask_blur if req.mode.startswith("inpaint") else None,
@@ -302,6 +317,58 @@ class InferenceService:
         if req.mode == "img2img":
             return self._run_img2img(req, seed)
         return self._run_inpaint(req, seed)
+
+    @staticmethod
+    def _dedupe_loras(specs: list[LoRASpec]) -> list[LoRASpec]:
+        deduped: dict[str, LoRASpec] = {}
+        for spec in specs:
+            if spec.name:
+                deduped[spec.name] = spec
+        return list(deduped.values())
+
+    @staticmethod
+    def _scale_lora(spec: LoRASpec, factor: float, channel: str) -> LoRASpec:
+        factor = min(1.0, max(0.0, float(factor)))
+        text_weight = float(spec.text_weight)
+        unet_weight = float(spec.unet_weight)
+        if channel == "text":
+            text_weight *= factor
+            weight = text_weight
+        else:
+            unet_weight *= factor
+            weight = unet_weight
+        return LoRASpec(spec.name, weight, text_weight, unet_weight)
+
+    def _regional_lora_groups_for_channel(
+        self,
+        *,
+        global_loras: list[LoRASpec],
+        common_loras: list[LoRASpec],
+        region_loras: list[list[LoRASpec]],
+        negative_ratios: list[float],
+        channel: str,
+    ) -> list[list[LoRASpec]]:
+        ordered_region_loras = self._dedupe_loras(
+            [lora for group in region_loras for lora in group]
+        )
+        ratios_by_name = {
+            spec.name: negative_ratios[i] if i < len(negative_ratios) else 0.0
+            for i, spec in enumerate(ordered_region_loras)
+        }
+
+        groups: list[list[LoRASpec]] = []
+        for target_index, target_loras in enumerate(region_loras):
+            active: list[LoRASpec] = list(global_loras) + list(common_loras)
+            for other_index, other_loras in enumerate(region_loras):
+                if other_index == target_index:
+                    continue
+                for spec in other_loras:
+                    ratio = ratios_by_name.get(spec.name, 0.0)
+                    if ratio > 0:
+                        active.append(self._scale_lora(spec, ratio, channel))
+            active.extend(target_loras)
+            groups.append(self._dedupe_loras(active))
+        return groups
 
     def _common_kwargs(self, req: GenerationRequest, seed: int) -> dict:
         kwargs: dict = {
@@ -436,85 +503,137 @@ class InferenceService:
     # ------------------------------------------------------------------ regional
 
     def _run_regional(self, req: GenerationRequest, seed: int) -> Image.Image:
-        """Staged inpaint with per-region LoRA swap.
+        """Latent Couple (hako-mikan method) regional generation.
 
-        1. Build a base image using ``common_loras`` and ``base_prompt`` (or use
-           the user-supplied image for img2img/inpaint when ``use_base_pass`` is
-           off).
-        2. For each region, swap LoRAs to ``common_loras + region_loras[i]`` and
-           inpaint with the region mask + region prompt.
-
-        Per-region LoRA swap is what prevents character LoRA cross-contamination
-        — the actual LoRA application happens inside ``_run_inpaint`` via
-        ``_prepare_pipe`` → ``pm.apply_loras``, which is no-op when unchanged
-        and unload+reload when changed.
+        At each denoising step, runs a CFG UNet pass per region and blends
+        negative/positive noise predictions weighted by latent-space masks.
+        LoRAs can be applied globally, as common regional LoRAs, or per region.
         """
+        from .latent_couple import RegionCondition, latent_couple_context
+
         spec = req.regional
         if spec is None or not spec.enabled:
             return self._run_standard(req, seed)
 
-        # --- 1. Base pass ---------------------------------------------------
-        base_prompt = spec.base_prompt.strip() or req.prompt
-        # common_loras (e.g. situation LoRA) provide the base layout; fall back
-        # to req.loras so the legacy code path still works when the new UI
-        # fields are empty.
-        base_loras = list(spec.common_loras) if spec.common_loras else list(req.loras)
-        base_strength = (
-            float(spec.base_strength) if spec.base_strength is not None else req.strength
+        if req.mode == "txt2img":
+            width = self._round_to_8(req.width)
+            height = self._round_to_8(req.height)
+            pipe = (
+                self.pm.get_controlnet("txt2img", req.controlnet_model)
+                if self._has_controlnet(req)
+                else self.pm.get_txt2img()
+            )
+            runner = self._run_txt2img
+        elif req.mode == "img2img":
+            if req.image is None:
+                raise ValueError("img2img mode requires an image")
+            width = self._round_to_8(req.image.width)
+            height = self._round_to_8(req.image.height)
+            pipe = (
+                self.pm.get_controlnet("img2img", req.controlnet_model)
+                if self._has_controlnet(req)
+                else self.pm.get_img2img()
+            )
+            runner = self._run_img2img
+        else:
+            if req.image is None or req.mask is None:
+                raise ValueError("inpaint mode requires an image and a mask")
+            width = self._round_to_8(req.image.width)
+            height = self._round_to_8(req.image.height)
+            pipe = (
+                self.pm.get_controlnet("inpaint", req.controlnet_model)
+                if self._has_controlnet(req)
+                else self.pm.get_inpaint()
+            )
+            runner = self._run_inpaint
+
+        self.pm.set_sampler(req.sampler)
+        self.pm.apply_textual_inversions(pipe, req.embeddings)
+
+        global_loras = list(req.loras)
+        common_loras = list(spec.common_loras)
+        base_loras = self._dedupe_loras(global_loras + common_loras + list(spec.base_loras))
+        region_loras = [
+            list(spec.region_loras[i]) if i < len(spec.region_loras) else []
+            for i in range(len(spec.region_prompts))
+        ]
+        region_lora_count = len(self._dedupe_loras([lora for group in region_loras for lora in group]))
+        text_negative_ratios = parse_lora_negative_ratios(
+            spec.lora_negative_text_encoder_ratios,
+            region_lora_count,
         )
+        unet_negative_ratios = parse_lora_negative_ratios(
+            spec.lora_negative_unet_ratios,
+            region_lora_count,
+        )
+        text_lora_groups = self._regional_lora_groups_for_channel(
+            global_loras=global_loras,
+            common_loras=common_loras,
+            region_loras=region_loras,
+            negative_ratios=text_negative_ratios,
+            channel="text",
+        )
+        unet_lora_groups = self._regional_lora_groups_for_channel(
+            global_loras=global_loras,
+            common_loras=common_loras,
+            region_loras=region_loras,
+            negative_ratios=unet_negative_ratios,
+            channel="unet",
+        )
+        all_loras = self._dedupe_loras(
+            base_loras + [lora for group in region_loras for lora in group]
+        )
+        self.pm.apply_loras([LoRASpec(lora.name, 0.0) for lora in all_loras], pipe)
+
+        masks = build_region_masks(spec, (width, height))
+        if not masks or len(masks) != len(spec.region_prompts):
+            return self._run_standard(req, seed)
+
+        conditions: list[RegionCondition] = []
+        for i, region_prompt in enumerate(spec.region_prompts):
+            full_prompt = combine_prompt(spec.common_prompt, region_prompt)
+            region_negative = (
+                spec.region_negative_prompts[i]
+                if i < len(spec.region_negative_prompts)
+                else ""
+            )
+            full_negative = combine_prompt(req.negative_prompt, region_negative)
+            text_loras = text_lora_groups[i] if i < len(text_lora_groups) else []
+            unet_loras = unet_lora_groups[i] if i < len(unet_lora_groups) else []
+            self.pm.set_active_text_loras(text_loras, pipe)
+            pe, ne, pp, np_ = self._encode_long_prompt(pipe, full_prompt, full_negative)
+            conditions.append(RegionCondition(
+                prompt_embeds=pe,
+                negative_prompt_embeds=ne,
+                pooled_embeds=pp,
+                negative_pooled_embeds=np_,
+                pil_mask=masks[i],
+                base_ratio=(
+                    spec.region_base_ratios[i]
+                    if i < len(spec.region_base_ratios)
+                    else 0.2
+                ),
+                unet_loras=tuple(unet_loras),
+            ))
+
+        base_prompt = combine_prompt(spec.common_prompt, spec.base_prompt or req.prompt)
+        self.pm.set_active_text_loras(base_loras, pipe)
         base_req = replace(
             req,
             prompt=base_prompt,
-            strength=base_strength,
-            loras=base_loras,
+            width=width,
+            height=height,
             regional=None,
+            loras_prepared=True,
         )
-
-        if req.mode == "txt2img" or spec.use_base_pass:
-            current = self._run_standard(base_req, seed)
-        else:
-            if req.image is None:
-                current = self._run_standard(base_req, seed)
-            else:
-                current = req.image.convert("RGB")
-
-        # --- 2. Region masks ------------------------------------------------
-        masks = build_region_masks(spec, current.size)
-        if not masks:
-            return current
-
-        # --- 3. Per-region inpaint with swapped LoRAs ----------------------
-        negatives = spec.region_negative_prompts or []
-        region_strength = (
-            float(spec.region_strength)
-            if spec.region_strength is not None
-            else req.strength
-        )
-        for index, (mask, region_prompt) in enumerate(zip(masks, spec.region_prompts)):
-            if self._stop_event.is_set():
-                logger.info("Regional generation cancelled at region %d", index)
-                break
-            region_negative = negatives[index] if index < len(negatives) else ""
-            negative = combine_prompt(req.negative_prompt, region_negative)
-            prompt = combine_prompt(spec.common_prompt, region_prompt)
-            per_region = (
-                spec.region_loras[index] if index < len(spec.region_loras) else []
-            )
-            merged_loras = list(spec.common_loras) + list(per_region)
-            region_req = replace(
-                req,
-                mode="inpaint_manual",
-                image=current,
-                mask=mask,
-                prompt=prompt,
-                negative_prompt=negative,
-                strength=region_strength,
-                loras=merged_loras,
-                seed=seed + index + 1,
-                regional=None,
-            )
-            current = self._run_inpaint(region_req, seed + index + 1)
-        return current
+        with latent_couple_context(
+            pipe.unet,
+            conditions,
+            set_loras=lambda loras: self.pm.set_active_unet_loras(list(loras), pipe),
+            base_loras=tuple(base_loras),
+            lora_stop_step=int(spec.lora_stop_step or 0),
+        ):
+            return runner(base_req, seed)
 
     # ------------------------------------------------------------------ OOM
 
