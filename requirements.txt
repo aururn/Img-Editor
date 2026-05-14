@@ -1,0 +1,20 @@
+# Do not pin torch/torchvision here when using GPU images such as Vast.ai.
+# Install the CUDA-matched PyTorch build first, then install these packages.
+diffusers>=0.31,<0.40
+transformers>=4.46,<5.0
+accelerate>=1.0
+peft>=0.13
+safetensors>=0.4.5
+huggingface_hub>=0.26,<1.0
+gradio>=4.40,<5.0
+# gradio 4.x requires fastapi/starlette/pydantic upper bounds (newer versions cause 500 errors)
+fastapi>=0.100,<0.116
+starlette>=0.27,<0.42
+pydantic>=2.0,<2.11
+pillow
+opencv-python
+numpy
+pyyaml
+ultralytics
+audioop-lts; python_version >= "3.13"
+

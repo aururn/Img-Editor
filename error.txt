@@ -1,0 +1,20 @@
+Windows上でPython仮想環境を作成して起動しようとした際、最初は pip のアップグレード中に [WinError 32] が発生し、pip が壊れて依存関係のインストールが途中失敗した。そのため yaml / PyYAML が見つからず起動できなかった。
+
+対処として .venv を作り直し、pip ではなく python -m pip を使って pip / setuptools / wheel、torch / torchvision、requirements.txt を再インストールした。
+
+その後、Gradio起動時に 500 Internal Server Error が発生。原因は gradio 4.44.1 に対して fastapi / starlette / pydantic などの依存パッケージが新しすぎたこと。fastapi==0.115.6、starlette==0.41.3、pydantic==2.10.6 に固定して解消した。
+
+さらに huggingface_hub 1.14.0 が入ってしまい、gradio が `from huggingface_hub import HfFolder` で失敗した。transformers 4.57.6 も huggingface-hub<1.0 を要求していたため、huggingface-hub==0.36.2 に固定して解消した。
+
+最終的な対処は、主要依存関係を以下のように固定すること：
+
+gradio==4.44.1
+gradio-client==1.3.0
+fastapi==0.115.6
+starlette==0.41.3
+pydantic==2.10.6
+huggingface-hub==0.36.2
+transformers==4.57.6
+diffusers==0.38.0
+
+以後は、Windowsでは pip の直接実行より `python -m pip` を使う。依存関係を更新する場合は、Gradio / FastAPI / Starlette / Pydantic / huggingface-hub の組み合わせが崩れないようにバージョン固定する。

@@ -1,0 +1,64 @@
+app:
+  host: "0.0.0.0"
+  port: 7860
+  log_level: "INFO"
+
+paths:
+  checkpoints_dir: "./models/checkpoints"
+  loras_dir: "./models/loras"
+  embeddings_dir: "./models/embeddings"
+  controlnet_dir: "./models/controlnet"
+  ip_adapter_dir: "./models/ip_adapter"
+  vae_dir: "./models/vae"
+  detection_dir: "./models/detection"
+  outputs_dir: "./outputs"
+  presets_dir: "./presets"
+  logs_dir: "./logs"
+
+model:
+  base_checkpoint: "illustriousXL_v01.safetensors"
+  vae: "madebyollin/sdxl-vae-fp16-fix"
+  default_sampler: "DPM++ 2M Karras"
+  enable_xformers: false
+  enable_vae_tiling: true
+  precision: "fp16"
+  cpu_offload: false
+
+detection:
+  eye_model: "face_yolov8n.pt"
+  confidence_threshold: 0.35
+  padding_px: 8
+  feather_px: 12
+
+defaults:
+  img2img:
+    strength: 0.55
+    cfg_scale: 7.0
+    steps: 28
+  inpaint:
+    strength: 0.75
+    cfg_scale: 7.0
+    steps: 28
+    mask_blur: 8
+
+controlnet:
+  preprocess: "none"
+  scale: 1.0
+  start: 0.0
+  end: 1.0
+
+ip_adapter:
+  scale: 1.0
+
+regional:
+  enabled: false
+  layout: "horizontal"
+  ratios: ""
+  use_base_pass: false
+
+limits:
+  max_image_size: 2048
+  max_file_size_mb: 512
+
+history:
+  max_items: 20
