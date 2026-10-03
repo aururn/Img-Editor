@@ -1,0 +1,667 @@
+
+/* ─── CSS Variables ─────────────────────────────────────── */
+:root {
+    --ee-bg:           #f4f6fb;
+    --ee-surface:      #ffffff;
+    --ee-surface-2:    #f8fafc;
+    --ee-border:       #d9e0ec;
+    --ee-border-strong:#b9c8dc;
+    --ee-text:         #1f2937;
+    --ee-muted:        #64748b;
+    --ee-soft:         #94a3b8;
+    --ee-accent:       #7c3aed;
+    --ee-accent-soft:  #ede9fe;
+    --ee-accent-glow:  rgba(124, 58, 237, 0.14);
+    --ee-shadow:       0 1px 3px rgba(15,23,42,0.05), 0 6px 20px rgba(15,23,42,0.07);
+}
+
+/* ─── Base ──────────────────────────────────────────────── */
+.gradio-container, body, #root, .main {
+    background: var(--ee-bg) !important;
+    color: var(--ee-text) !important;
+    font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif !important;
+    min-height: 100vh;
+    max-width: none !important;
+}
+footer { display: none !important; }
+
+/* ─── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #eef2f7; }
+::-webkit-scrollbar-thumb { background: #bdc8d8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ─── Topbar ─────────────────────────────────────────────── */
+#topbar {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 30 !important;
+    background: rgba(255,255,255,0.97) !important;
+    border: none !important;
+    border-bottom: 1px solid var(--ee-border) !important;
+    padding: 10px 20px !important;
+    margin-bottom: 0 !important;
+    box-shadow: 0 1px 0 rgba(15,23,42,0.05) !important;
+}
+#topbar .topbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+}
+#topbar .topbar-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #7c3aed, #0f766e);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(124,58,237,0.22);
+}
+#topbar .topbar-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ee-text);
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+#topbar .topbar-subtitle {
+    font-size: 11px;
+    color: #0f766e;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+#topbar .topbar-model {
+    margin-left: auto;
+    max-width: 42vw;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    color: var(--ee-muted);
+    background: #eef4ff;
+    border: 1px solid #d7e4ff;
+    border-radius: 999px;
+    padding: 3px 10px;
+}
+
+/* ─── Diagnostics accordion ──────────────────────────────── */
+#diag-accordion {
+    border: none !important;
+    border-bottom: 1px solid var(--ee-border) !important;
+    border-radius: 0 !important;
+    background: var(--ee-surface) !important;
+    margin: 0 !important;
+}
+#diag-accordion > .label-wrap {
+    padding: 6px 18px !important;
+    font-size: 11px !important;
+    color: var(--ee-muted) !important;
+    font-weight: 600 !important;
+    letter-spacing: 0 !important;
+    background: var(--ee-surface) !important;
+}
+#diag-accordion > .label-wrap:hover { color: var(--ee-accent) !important; }
+
+/* ─── Mode selector (Radio → tab bar) ───────────────────── */
+#mode-selector {
+    background: var(--ee-surface) !important;
+    border-bottom: 1px solid var(--ee-border) !important;
+    padding: 0 18px !important;
+    margin: 0 !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+}
+#mode-selector::-webkit-scrollbar { display: none; }
+#mode-selector > div,
+#mode-selector .wrap {
+    flex-direction: row !important;
+    gap: 0 !important;
+    flex-wrap: nowrap !important;
+    min-width: max-content !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+#mode-selector label {
+    padding: 10px 22px !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -1px !important;
+    color: var(--ee-muted) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0 !important;
+    cursor: pointer !important;
+    transition: color 0.15s, border-color 0.15s, background 0.15s !important;
+    white-space: nowrap !important;
+    background: transparent !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+#mode-selector label:hover {
+    color: var(--ee-accent) !important;
+    background: var(--ee-accent-soft) !important;
+}
+#mode-selector label:has(input:checked) {
+    color: var(--ee-accent) !important;
+    border-bottom-color: var(--ee-accent) !important;
+    background: var(--ee-accent-soft) !important;
+}
+#mode-selector input[type="radio"] { display: none !important; }
+#mode-selector span { pointer-events: none; }
+
+/* ─── Main layout ────────────────────────────────────────── */
+#main-row {
+    gap: 12px !important;
+    padding: 12px !important;
+    align-items: flex-start !important;
+    margin: 0 !important;
+}
+
+/* Center panel alignment fix */
+#center-panel > .block,
+#center-panel > .form {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* ─── Section labels ─────────────────────────────────────── */
+.section-title {
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    color: var(--ee-muted) !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    margin: 0 0 10px 0 !important;
+    padding-bottom: 8px !important;
+    border-bottom: 1px solid var(--ee-border) !important;
+    display: block;
+}
+
+/* ─── Panels ─────────────────────────────────────────────── */
+.panel {
+    background: var(--ee-surface) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 10px !important;
+    padding: 12px 14px !important;
+    margin-bottom: 10px !important;
+    box-shadow: var(--ee-shadow) !important;
+}
+
+/* ─── Labels ─────────────────────────────────────────────── */
+.gradio-container label > span,
+.gradio-container .block > label,
+.block label span {
+    color: #475569 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+}
+
+/* ─── Text inputs & Textareas ────────────────────────────── */
+.gradio-container textarea,
+.gradio-container input[type="text"],
+.gradio-container input[type="number"] {
+    background: var(--ee-surface) !important;
+    border: 1px solid var(--ee-border-strong) !important;
+    color: var(--ee-text) !important;
+    border-radius: 7px !important;
+    font-size: 13px !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+.gradio-container textarea::placeholder,
+.gradio-container input::placeholder {
+    color: var(--ee-soft) !important;
+}
+.gradio-container textarea:focus,
+.gradio-container input[type="text"]:focus,
+.gradio-container input[type="number"]:focus {
+    border-color: var(--ee-accent) !important;
+    box-shadow: 0 0 0 3px var(--ee-accent-glow) !important;
+    outline: none !important;
+}
+.gradio-container textarea { resize: vertical !important; }
+
+/* Prompt textarea — main input */
+#prompt-box textarea {
+    background: var(--ee-surface) !important;
+    border-color: #b3a0f5 !important;
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+    color: var(--ee-text) !important;
+    min-height: 130px !important;
+}
+#prompt-box textarea:focus {
+    border-color: var(--ee-accent) !important;
+    box-shadow: 0 0 0 3px var(--ee-accent-glow) !important;
+}
+
+/* ─── Dropdowns / Selects ────────────────────────────────── */
+.gradio-container select,
+.gradio-container .dropdown {
+    background: var(--ee-surface) !important;
+    border: 1px solid var(--ee-border-strong) !important;
+    color: var(--ee-text) !important;
+    border-radius: 7px !important;
+    min-width: 0 !important;
+}
+.gradio-container .wrap.svelte-1ipelgc,
+.gradio-container .wrap-inner { background: var(--ee-surface) !important; }
+.gradio-container .gradio-dropdown,
+.gradio-container .gradio-dropdown > div,
+.gradio-container .secondary-wrap,
+.gradio-container input[role="combobox"],
+.gradio-container [role="combobox"],
+#sampler-dropdown,
+#checkpoint-dropdown {
+    background: var(--ee-surface) !important;
+    color: var(--ee-text) !important;
+    border-color: var(--ee-border-strong) !important;
+}
+.gradio-container [role="combobox"]:focus-within,
+#sampler-dropdown:focus-within,
+#checkpoint-dropdown:focus-within {
+    border-color: var(--ee-accent) !important;
+    box-shadow: 0 0 0 3px var(--ee-accent-glow) !important;
+}
+.gradio-container [role="listbox"],
+.gradio-container .options,
+.gradio-container .item,
+.gradio-container option {
+    background: var(--ee-surface) !important;
+    color: var(--ee-text) !important;
+}
+.gradio-container [role="option"],
+.gradio-container .item {
+    color: var(--ee-text) !important;
+}
+.gradio-container [role="option"]:hover,
+.gradio-container .item:hover {
+    background: var(--ee-accent-soft) !important;
+    color: var(--ee-accent) !important;
+}
+
+/* ─── Sliders ────────────────────────────────────────────── */
+.gradio-container input[type="range"] {
+    accent-color: var(--ee-accent) !important;
+    cursor: pointer !important;
+}
+.gradio-container .gradio-slider input[type="number"] {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace !important;
+    font-size: 12px !important;
+    color: var(--ee-muted) !important;
+    background: var(--ee-surface-2) !important;
+    width: 56px !important;
+}
+
+/* ─── Generate button ────────────────────────────────────── */
+.primary-run {
+    background: var(--ee-accent) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 0 !important;
+    height: 48px !important;
+    box-shadow: 0 4px 16px rgba(124, 58, 237, 0.24) !important;
+    transition: box-shadow 0.2s ease, opacity 0.15s ease, background 0.15s !important;
+}
+.primary-run:hover {
+    background: #6d28d9 !important;
+    box-shadow: 0 6px 24px rgba(124, 58, 237, 0.36) !important;
+    opacity: 1 !important;
+}
+.primary-run:active { opacity: 0.85 !important; transform: translateY(1px) !important; }
+.primary-run:disabled {
+    background: #c4b5fd !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+    animation: btn-pulse 1.8s ease-in-out infinite !important;
+}
+@keyframes btn-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(124, 58, 237, 0.15); }
+    50%       { box-shadow: 0 0 24px rgba(124, 58, 237, 0.35); }
+}
+
+/* ─── Secondary / Cancel button ──────────────────────────── */
+.gradio-container button.secondary,
+.gradio-container button[variant="secondary"] {
+    background: var(--ee-surface) !important;
+    border: 1px solid var(--ee-border-strong) !important;
+    color: var(--ee-muted) !important;
+    border-radius: 8px !important;
+    font-size: 13px !important;
+    transition: background 0.15s, border-color 0.15s, color 0.15s !important;
+}
+.gradio-container button.secondary:hover {
+    background: var(--ee-accent-soft) !important;
+    border-color: var(--ee-accent) !important;
+    color: var(--ee-accent) !important;
+}
+
+/* ─── Small utility buttons ──────────────────────────────── */
+.gradio-container button.sm,
+.gradio-container button[size="sm"] {
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+    color: var(--ee-muted) !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0 !important;
+    min-width: 34px !important;
+    min-height: 30px !important;
+    transition: background 0.15s, color 0.15s !important;
+}
+.gradio-container button.sm:hover {
+    background: var(--ee-accent-soft) !important;
+    color: var(--ee-accent) !important;
+    border-color: var(--ee-accent) !important;
+}
+
+/* ─── "Send to" action buttons ───────────────────────────── */
+.send-btn {
+    background: transparent !important;
+    border: 1px solid var(--ee-border-strong) !important;
+    color: var(--ee-muted) !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0 !important;
+    transition: background 0.15s, border-color 0.15s, color 0.15s !important;
+}
+.send-btn:hover {
+    background: var(--ee-accent-soft) !important;
+    border-color: var(--ee-accent) !important;
+    color: var(--ee-accent) !important;
+}
+
+/* ─── Settings summary bar ───────────────────────────────── */
+.settings-summary {
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 8px !important;
+    padding: 6px 12px !important;
+    margin-bottom: 6px !important;
+    text-align: center !important;
+}
+.settings-summary p {
+    font-family: 'SF Mono', 'Cascadia Code', monospace !important;
+    font-size: 11px !important;
+    color: var(--ee-muted) !important;
+    margin: 0 !important;
+    letter-spacing: 0 !important;
+}
+
+/* ─── Accordion ──────────────────────────────────────────── */
+.gradio-container .gradio-accordion {
+    background: var(--ee-surface) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 10px !important;
+    margin-bottom: 10px !important;
+    box-shadow: var(--ee-shadow) !important;
+    overflow: hidden !important;
+}
+.gradio-container .gradio-accordion > .label-wrap {
+    padding: 9px 14px !important;
+    color: var(--ee-muted) !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0 !important;
+    background: var(--ee-surface-2) !important;
+    border-bottom: 1px solid var(--ee-border) !important;
+}
+.gradio-container .gradio-accordion > .label-wrap:hover { color: var(--ee-accent) !important; }
+
+/* ─── LoRA CheckboxGroup ─────────────────────────────────── */
+#lora-checkboxes {
+    max-height: 280px !important;
+    overflow-y: auto !important;
+    scrollbar-width: thin !important;
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 8px !important;
+}
+#lora-checkboxes .wrap {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    padding: 4px 4px !important;
+}
+#lora-checkboxes label {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 5px 8px !important;
+    border-radius: 5px !important;
+    color: var(--ee-text) !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    cursor: pointer !important;
+    transition: background 0.12s !important;
+    overflow: hidden !important;
+}
+#lora-checkboxes label span {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+#lora-checkboxes label:hover { background: var(--ee-accent-soft) !important; }
+#lora-checkboxes input[type="checkbox"] {
+    width: 14px !important;
+    height: 14px !important;
+    accent-color: var(--ee-accent) !important;
+    flex-shrink: 0 !important;
+    cursor: pointer !important;
+}
+
+/* ─── History Gallery ────────────────────────────────────── */
+.gradio-container .gradio-gallery { background: transparent !important; }
+.gradio-container .gradio-gallery .preview,
+.gradio-container .gradio-gallery .thumbnail-item {
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+    background: var(--ee-surface) !important;
+}
+.gradio-container .gradio-gallery .thumbnail-item:hover {
+    border-color: var(--ee-accent) !important;
+    box-shadow: 0 0 0 2px var(--ee-accent-soft) !important;
+}
+.gradio-container .gradio-gallery .thumbnail-item.selected {
+    border-color: var(--ee-accent) !important;
+    box-shadow: 0 0 0 3px var(--ee-accent-glow) !important;
+}
+
+/* ─── Image & Canvas components ──────────────────────────── */
+.gradio-container .gradio-image {
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+}
+.gradio-container .gradio-imageeditor {
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    border: 1px solid var(--ee-border) !important;
+}
+
+/* ─── Canvas / img2img ───────────────────────────────────── */
+#canvas-box,
+#img2img-box {
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 8px !important;
+    background: var(--ee-surface-2) !important;
+    overflow: hidden !important;
+    margin-bottom: 10px !important;
+}
+#canvas-box > div,
+#img2img-box > div,
+#canvas-box .upload-container,
+#canvas-box [data-testid="upload-container"],
+#canvas-box .svelte-1ipelgc,
+#img2img-box .upload-container,
+#img2img-box [data-testid="upload-container"] {
+    background: var(--ee-surface-2) !important;
+}
+#canvas-box p,
+#canvas-box .upload-text,
+#img2img-box p {
+    color: var(--ee-muted) !important;
+}
+#canvas-box svg,
+#img2img-box svg {
+    fill: var(--ee-accent) !important;
+    color: var(--ee-accent) !important;
+}
+
+/* Result image */
+#result-image-box {
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    min-height: 280px !important;
+}
+#result-image-box img {
+    max-height: 72vh !important;
+    object-fit: contain !important;
+    width: 100% !important;
+    display: block !important;
+}
+
+/* ─── Result meta ────────────────────────────────────────── */
+.result-meta,
+.result-meta p {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace !important;
+    font-size: 11px !important;
+    color: var(--ee-muted) !important;
+    line-height: 1.7 !important;
+    padding: 6px 8px !important;
+    letter-spacing: 0 !important;
+    margin: 4px 0 !important;
+    background: var(--ee-surface-2) !important;
+    border: 1px solid var(--ee-border) !important;
+    border-radius: 7px !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+}
+
+/* ─── Seed Number input ──────────────────────────────────── */
+.seed-number input[type="number"] {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace !important;
+    font-size: 12px !important;
+    color: var(--ee-muted) !important;
+    background: var(--ee-surface-2) !important;
+}
+
+/* ─── File upload ────────────────────────────────────────── */
+.gradio-container .gradio-file {
+    background: var(--ee-surface-2) !important;
+    border: 1px dashed var(--ee-border-strong) !important;
+    border-radius: 7px !important;
+    transition: border-color 0.15s !important;
+}
+.gradio-container .gradio-file:hover {
+    border-color: var(--ee-accent) !important;
+    background: var(--ee-accent-soft) !important;
+}
+.gradio-container .gradio-file > div,
+.gradio-container .gradio-file .file-preview {
+    background: transparent !important;
+    color: var(--ee-muted) !important;
+}
+
+/* ─── Checkbox group ─────────────────────────────────────── */
+.gradio-container .gradio-checkboxgroup label {
+    color: var(--ee-text) !important;
+    font-size: 12px !important;
+}
+.gradio-container .gradio-checkboxgroup input[type="checkbox"] {
+    accent-color: var(--ee-accent) !important;
+}
+
+/* ─── Result image empty state ───────────────────────────── */
+#result-image-box .empty,
+#result-image-box .icon-wrap {
+    background: var(--ee-surface-2) !important;
+    color: var(--ee-soft) !important;
+}
+#result-image-box svg {
+    fill: var(--ee-soft) !important;
+    color: var(--ee-soft) !important;
+}
+
+/* ─── Markdown ───────────────────────────────────────────── */
+.gradio-container .gradio-markdown {
+    color: var(--ee-muted) !important;
+    font-size: 12px !important;
+}
+.gradio-container .gradio-markdown h3 {
+    color: var(--ee-accent) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    margin: 4px 0 2px !important;
+}
+.gradio-container .gradio-markdown li { font-size: 12px !important; }
+.gradio-container .gradio-markdown code {
+    background: var(--ee-accent-soft) !important;
+    border-radius: 3px !important;
+    padding: 1px 4px !important;
+    color: var(--ee-accent) !important;
+}
+
+/* ─── Tables ─────────────────────────────────────────────── */
+.gradio-container table,
+.gradio-container .table-wrap {
+    background: var(--ee-surface) !important;
+    color: var(--ee-text) !important;
+    border-color: var(--ee-border) !important;
+}
+.gradio-container th {
+    background: var(--ee-surface-2) !important;
+    color: #334155 !important;
+}
+.gradio-container td {
+    background: var(--ee-surface) !important;
+    color: var(--ee-text) !important;
+}
+
+@media (max-width: 1100px) {
+    #main-row {
+        flex-direction: column !important;
+    }
+    #left-rail,
+    #center-panel,
+    #right-panel {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+}
+
+@media (max-width: 720px) {
+    #topbar { padding: 8px 12px !important; }
+    #topbar .topbar-subtitle { display: none; }
+    #topbar .topbar-model { max-width: 46vw; }
+    #mode-selector { padding: 0 10px !important; }
+    #mode-selector label { padding: 9px 14px !important; }
+    #main-row { padding: 8px !important; gap: 8px !important; }
+    .panel { padding: 10px !important; }
+}
+
+

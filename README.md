@@ -161,6 +161,17 @@ ap/
 を pin していません。Python 3.14 環境でも古い `pydantic-core` をビルドしないように、
 Gradio 5系と `pydantic>=2.12` を前提にしています。
 
+## 開発時の検証
+
+```bash
+python -m pip install pillow pyyaml ruff==0.16.10
+python -m unittest discover -s tests -v
+ruff check src/core/inference.py src/ui/main_view.py tests/test_inference.py
+```
+
+生成モードごとの引数と入力検証を，モデルを読み込まないテストで確認します。
+実際の画像生成の動作確認には，別途モデルと実行環境が必要です。
+
 ## ライセンス・利用規約
 - 本アプリケーションコード本体: MIT(LICENSE は別途必要に応じて配置)
 - 取り扱う各モデル(ベース / LoRA)は配布元のライセンス・利用規約に従ってください
