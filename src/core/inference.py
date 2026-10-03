@@ -1,4 +1,5 @@
 """Image-generation orchestration."""
+
 from __future__ import annotations
 
 import random
@@ -185,9 +186,7 @@ class InferenceService:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         meta = self._metadata(req, image, seed)
-        return GenerationResult(
-            image=image, seed_used=seed, elapsed_ms=elapsed_ms, metadata=meta
-        )
+        return GenerationResult(image=image, seed_used=seed, elapsed_ms=elapsed_ms, metadata=meta)
 
     def _metadata(self, req: GenerationRequest, image: Image.Image, seed: int) -> dict:
         return {
@@ -255,14 +254,18 @@ class InferenceService:
             for start in range(0, max(len(body), 1), 75):
                 seg = body[start : start + 75]
                 n_pad = 75 - len(seg)
-                inp = torch.cat(
-                    [
-                        torch.tensor([bos], dtype=torch.long),
-                        seg,
-                        torch.tensor([eos], dtype=torch.long),
-                        torch.tensor([pad] * n_pad, dtype=torch.long),
-                    ]
-                ).unsqueeze(0).to(dev)
+                inp = (
+                    torch.cat(
+                        [
+                            torch.tensor([bos], dtype=torch.long),
+                            seg,
+                            torch.tensor([eos], dtype=torch.long),
+                            torch.tensor([pad] * n_pad, dtype=torch.long),
+                        ]
+                    )
+                    .unsqueeze(0)
+                    .to(dev)
+                )
                 with torch.no_grad():
                     out = encoder(inp, output_hidden_states=True)
                 chunks.append(out.hidden_states[-2])
@@ -301,12 +304,8 @@ class InferenceService:
                 )
             return t
 
-        prompt_embeds = torch.cat(
-            [_pad(prompt_l, max_len), _pad(prompt_g, max_len)], dim=-1
-        )
-        neg_embeds = torch.cat(
-            [_pad(neg_l, max_len), _pad(neg_g, max_len)], dim=-1
-        )
+        prompt_embeds = torch.cat([_pad(prompt_l, max_len), _pad(prompt_g, max_len)], dim=-1)
+        neg_embeds = torch.cat([_pad(neg_l, max_len), _pad(neg_g, max_len)], dim=-1)
         return prompt_embeds, neg_embeds, pooled_pos, pooled_neg
 
     # ------------------------------------------------------------------ dispatch
@@ -370,8 +369,16 @@ class InferenceService:
             groups.append(self._dedupe_loras(active))
         return groups
 
-    def _common_kwargs(self, req: GenerationRequest, seed: int) -> dict:
+    def _pipeline_kwargs(self, pipe, req: GenerationRequest, seed: int) -> dict:
+        self._prepare_pipe(pipe, req)
+        positive, negative, pooled_positive, pooled_negative = self._encode_long_prompt(
+            pipe, req.prompt, req.negative_prompt
+        )
         kwargs: dict = {
+            "prompt_embeds": positive,
+            "negative_prompt_embeds": negative,
+            "pooled_prompt_embeds": pooled_positive,
+            "negative_pooled_prompt_embeds": pooled_negative,
             "guidance_scale": float(req.cfg_scale),
             "num_inference_steps": int(req.steps),
             "generator": self._generator(seed),
@@ -381,6 +388,25 @@ class InferenceService:
             kwargs["ip_adapter_image"] = req.ip_adapter_image.convert("RGB")
         return kwargs
 
+    def _controlnet_kwargs(
+        self, req: GenerationRequest, size: tuple[int, int], source_image: Image.Image | None
+    ) -> dict:
+        if not self._has_controlnet(req):
+            return {}
+        control = self._control_image(req, size, source_image)
+        if control is None:
+            if req.mode == "txt2img":
+                raise ValueError("ControlNet txt2img needs a control image")
+            mode = "img2img" if req.mode == "img2img" else "inpaint"
+            raise ValueError(f"ControlNet {mode} needs a control image or Canny preprocess")
+        image_key = "image" if req.mode == "txt2img" else "control_image"
+        return {
+            image_key: control,
+            "controlnet_conditioning_scale": float(req.controlnet_scale),
+            "control_guidance_start": float(req.controlnet_start),
+            "control_guidance_end": float(req.controlnet_end),
+        }
+
     def _run_txt2img(self, req: GenerationRequest, seed: int) -> Image.Image:
         width = self._round_to_8(req.width)
         height = self._round_to_8(req.height)
@@ -388,31 +414,14 @@ class InferenceService:
             pipe = self.pm.get_controlnet("txt2img", req.controlnet_model)
         else:
             pipe = self.pm.get_txt2img()
-        self._prepare_pipe(pipe, req)
-        pe, ne, pp, np_ = self._encode_long_prompt(pipe, req.prompt, req.negative_prompt)
-        kwargs = self._common_kwargs(req, seed)
+        kwargs = self._pipeline_kwargs(pipe, req, seed)
         kwargs.update(
             {
-                "prompt_embeds": pe,
-                "negative_prompt_embeds": ne,
-                "pooled_prompt_embeds": pp,
-                "negative_pooled_prompt_embeds": np_,
                 "width": width,
                 "height": height,
             }
         )
-        if self._has_controlnet(req):
-            control = self._control_image(req, (width, height), req.controlnet_image)
-            if control is None:
-                raise ValueError("ControlNet txt2img needs a control image")
-            kwargs.update(
-                {
-                    "image": control,
-                    "controlnet_conditioning_scale": float(req.controlnet_scale),
-                    "control_guidance_start": float(req.controlnet_start),
-                    "control_guidance_end": float(req.controlnet_end),
-                }
-            )
+        kwargs.update(self._controlnet_kwargs(req, (width, height), req.controlnet_image))
         out = pipe(**kwargs)
         return out.images[0]
 
@@ -428,31 +437,14 @@ class InferenceService:
             pipe = self.pm.get_controlnet("img2img", req.controlnet_model)
         else:
             pipe = self.pm.get_img2img()
-        self._prepare_pipe(pipe, req)
-        pe, ne, pp, np_ = self._encode_long_prompt(pipe, req.prompt, req.negative_prompt)
-        kwargs = self._common_kwargs(req, seed)
+        kwargs = self._pipeline_kwargs(pipe, req, seed)
         kwargs.update(
             {
-                "prompt_embeds": pe,
-                "negative_prompt_embeds": ne,
-                "pooled_prompt_embeds": pp,
-                "negative_pooled_prompt_embeds": np_,
                 "image": image,
                 "strength": float(req.strength),
             }
         )
-        if self._has_controlnet(req):
-            control = self._control_image(req, image.size, image)
-            if control is None:
-                raise ValueError("ControlNet img2img needs a control image or Canny preprocess")
-            kwargs.update(
-                {
-                    "control_image": control,
-                    "controlnet_conditioning_scale": float(req.controlnet_scale),
-                    "control_guidance_start": float(req.controlnet_start),
-                    "control_guidance_end": float(req.controlnet_end),
-                }
-            )
+        kwargs.update(self._controlnet_kwargs(req, (width, height), image))
         out = pipe(**kwargs)
         return out.images[0]
 
@@ -469,15 +461,9 @@ class InferenceService:
             pipe = self.pm.get_controlnet("inpaint", req.controlnet_model)
         else:
             pipe = self.pm.get_inpaint()
-        self._prepare_pipe(pipe, req)
-        pe, ne, pp, np_ = self._encode_long_prompt(pipe, req.prompt, req.negative_prompt)
-        kwargs = self._common_kwargs(req, seed)
+        kwargs = self._pipeline_kwargs(pipe, req, seed)
         kwargs.update(
             {
-                "prompt_embeds": pe,
-                "negative_prompt_embeds": ne,
-                "pooled_prompt_embeds": pp,
-                "negative_pooled_prompt_embeds": np_,
                 "image": image,
                 "mask_image": mask,
                 "strength": float(req.strength),
@@ -485,18 +471,7 @@ class InferenceService:
                 "height": height,
             }
         )
-        if self._has_controlnet(req):
-            control = self._control_image(req, image.size, image)
-            if control is None:
-                raise ValueError("ControlNet inpaint needs a control image or Canny preprocess")
-            kwargs.update(
-                {
-                    "control_image": control,
-                    "controlnet_conditioning_scale": float(req.controlnet_scale),
-                    "control_guidance_start": float(req.controlnet_start),
-                    "control_guidance_end": float(req.controlnet_end),
-                }
-            )
+        kwargs.update(self._controlnet_kwargs(req, (width, height), image))
         out = pipe(**kwargs)
         return out.images[0]
 
@@ -557,7 +532,9 @@ class InferenceService:
             list(spec.region_loras[i]) if i < len(spec.region_loras) else []
             for i in range(len(spec.region_prompts))
         ]
-        region_lora_count = len(self._dedupe_loras([lora for group in region_loras for lora in group]))
+        region_lora_count = len(
+            self._dedupe_loras([lora for group in region_loras for lora in group])
+        )
         text_negative_ratios = parse_lora_negative_ratios(
             spec.lora_negative_text_encoder_ratios,
             region_lora_count,
@@ -593,28 +570,26 @@ class InferenceService:
         for i, region_prompt in enumerate(spec.region_prompts):
             full_prompt = combine_prompt(spec.common_prompt, region_prompt)
             region_negative = (
-                spec.region_negative_prompts[i]
-                if i < len(spec.region_negative_prompts)
-                else ""
+                spec.region_negative_prompts[i] if i < len(spec.region_negative_prompts) else ""
             )
             full_negative = combine_prompt(req.negative_prompt, region_negative)
             text_loras = text_lora_groups[i] if i < len(text_lora_groups) else []
             unet_loras = unet_lora_groups[i] if i < len(unet_lora_groups) else []
             self.pm.set_active_text_loras(text_loras, pipe)
             pe, ne, pp, np_ = self._encode_long_prompt(pipe, full_prompt, full_negative)
-            conditions.append(RegionCondition(
-                prompt_embeds=pe,
-                negative_prompt_embeds=ne,
-                pooled_embeds=pp,
-                negative_pooled_embeds=np_,
-                pil_mask=masks[i],
-                base_ratio=(
-                    spec.region_base_ratios[i]
-                    if i < len(spec.region_base_ratios)
-                    else 0.2
-                ),
-                unet_loras=tuple(unet_loras),
-            ))
+            conditions.append(
+                RegionCondition(
+                    prompt_embeds=pe,
+                    negative_prompt_embeds=ne,
+                    pooled_embeds=pp,
+                    negative_pooled_embeds=np_,
+                    pil_mask=masks[i],
+                    base_ratio=(
+                        spec.region_base_ratios[i] if i < len(spec.region_base_ratios) else 0.2
+                    ),
+                    unet_loras=tuple(unet_loras),
+                )
+            )
 
         base_prompt = combine_prompt(spec.common_prompt, spec.base_prompt or req.prompt)
         self.pm.set_active_text_loras(base_loras, pipe)
